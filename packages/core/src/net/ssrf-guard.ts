@@ -45,6 +45,11 @@ export function isRestrictedIpAddress(value: string): boolean {
   return true;
 }
 
+export function isLoopbackIpAddress(value: string): boolean {
+  const address = normalizeIpAddress(value);
+  return address === "::1" || (isIP(address) === 4 && address.startsWith("127."));
+}
+
 async function resolveHostAddresses(hostname: string): Promise<string[]> {
   if (isIP(hostname)) {
     return [normalizeIpAddress(hostname)];
@@ -60,11 +65,20 @@ async function resolveHostAddresses(hostname: string): Promise<string[]> {
 /**
  * Throw when the URL's host resolves to any restricted address. The caller must
  * use `redirect: "manual"` so a redirect cannot bypass this check.
+ *
+ * `allowLoopback` permits 127.0.0.0/8 and ::1 (e.g. a local model endpoint used
+ * as a routing input) while still blocking the higher-value SSRF targets:
+ * link-local (cloud metadata 169.254.169.254), RFC1918, CGNAT and multicast.
  */
-export async function assertPublicFetchTarget(rawUrl: string): Promise<void> {
+export async function assertPublicFetchTarget(
+  rawUrl: string,
+  options: { allowLoopback?: boolean } = {}
+): Promise<void> {
   const url = new URL(rawUrl);
   const addresses = await resolveHostAddresses(url.hostname);
-  if (addresses.some(isRestrictedIpAddress)) {
-    throw new Error("Requests to private, loopback, or link-local addresses are not allowed.");
+  const blocked = addresses.some((address) =>
+    isRestrictedIpAddress(address) && !(options.allowLoopback && isLoopbackIpAddress(address)));
+  if (blocked) {
+    throw new Error("Requests to private, link-local, or metadata addresses are not allowed.");
   }
 }

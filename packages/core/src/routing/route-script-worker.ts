@@ -204,9 +204,11 @@ async function controlledFetch(
   deadline: number
 ): Promise<Record<string, unknown>> {
   assertHttpUrl(rawUrl);
-  // Block SSRF to internal/loopback/metadata services. Redirects are manual, so
-  // the script must re-issue (and re-validate) any redirect target itself.
-  await assertPublicFetchTarget(rawUrl);
+  // Block SSRF to private/link-local/metadata services (e.g. 169.254.169.254).
+  // Loopback is allowed since a local model endpoint is a legitimate routing
+  // input. Redirects are manual, so the script must re-issue (and re-validate)
+  // any redirect target itself.
+  await assertPublicFetchTarget(rawUrl, { allowLoopback: true });
   const options = isRecord(rawOptions) ? rawOptions : {};
   const method = typeof options.method === "string" ? options.method.toUpperCase() : "GET";
   const body = typeof options.body === "string" ? options.body : undefined;
@@ -296,7 +298,8 @@ async function writeTextFile(file: string, value: string): Promise<void> {
 // Route script fs.* access is confined to a dedicated data directory. Absolute
 // paths, "~" expansion, and "../" traversal are rejected so a script cannot read
 // (~/.ssh/id_rsa) or overwrite (~/.bashrc, the config store) arbitrary files.
-const routeScriptDataDir = path.join(CONFIGDIR, "route-scripts");
+const routeScriptDataDir = process.env.CCR_ROUTE_SCRIPT_DATA_DIR?.trim()
+  || path.join(CONFIGDIR, "route-scripts");
 
 function resolveScriptPath(file: string): string {
   if (typeof file !== "string" || !file.trim() || file.includes("\0")) {

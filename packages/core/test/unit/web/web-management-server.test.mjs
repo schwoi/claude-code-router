@@ -145,11 +145,19 @@ async function rpc(baseUrl, authToken, method, args = []) {
 }
 
 function createHealthyCcrGateway(apiKey, state) {
-  return createServer((request, response) => {
+  return createServer(async (request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
     if (url.pathname === "/health") {
+      // A genuine same-user CCR gateway proves its identity by answering the
+      // probe's nonce challenge with an HMAC over the shared per-user secret.
+      const nonce = url.searchParams.get("ccr_identity_nonce");
+      const { computeGatewayIdentityProof, readOrCreateGatewayIdentitySecret } =
+        await import("@ccr/core/gateway/gateway-identity.ts");
       sendJson(response, 200, {
         core: "http://127.0.0.1:3457",
+        identityProof: nonce
+          ? computeGatewayIdentityProof(readOrCreateGatewayIdentitySecret(), nonce)
+          : undefined,
         status: "running",
         timestamp: new Date().toISOString()
       });
