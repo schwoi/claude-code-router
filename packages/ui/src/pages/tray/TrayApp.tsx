@@ -4,6 +4,7 @@ import {
   SnapshotMap, SourceTab, TrayComponentVariants, TrayWidgetConfig, UsageComparisonRow, UsageStatsFilter, UsageStatsRange, UsageTotals, useCallback, useEffect,
   useMemo, useState, useTrayErrorText, useTrayText, useTrayThemePreference
 } from "./shared";
+import { useRef } from "react";
 import {
   AccountSummaryPanel, AnimatedUsageChart, ChartShell, ModelShareChart, RingMetrics,
   SourceGrid, StatsGrid, TokenActivityPanel, TokenMixPanel, TrayStatusStrip
@@ -29,6 +30,8 @@ export function TrayApp() {
   const [trayWidgets, setTrayWidgets] = useState<TrayWidgetConfig[]>(DEFAULT_TRAY_WIDGETS);
   const [selectedRange, setSelectedRange] = useState<TrayHeaderRange>("30d");
 
+  const refreshIdRef = useRef(0);
+
   const refresh = useCallback(async () => {
     if (!window.ccr) {
       setSnapshots(emptySnapshots);
@@ -37,6 +40,9 @@ export function TrayApp() {
       return;
     }
 
+    // Guard against out-of-order responses: when the provider changes, an
+    // in-flight refresh for the previous provider must not clobber newer state.
+    const refreshId = ++refreshIdRef.current;
     setLoading(true);
     setError("");
     try {
@@ -51,6 +57,9 @@ export function TrayApp() {
         window.ccr.getProviderAccountSnapshots(selectedProvider)
       ]);
 
+      if (refreshId !== refreshIdRef.current) {
+        return;
+      }
       setSnapshots({ today, "24h": day, "7d": week, "30d": month });
       setAllSnapshots((current) => ({ ...current, "30d": allMonth ?? month }));
       setAccountSnapshots(accounts);
@@ -58,9 +67,13 @@ export function TrayApp() {
       setTrayWidgets(normalizeTrayWidgets(config.trayWidgets, config.trayWindowModules, config.trayComponentVariants));
       applyTrayThemePreference(config.theme);
     } catch (nextError) {
-      setError(formatError(nextError));
+      if (refreshId === refreshIdRef.current) {
+        setError(formatError(nextError));
+      }
     } finally {
-      setLoading(false);
+      if (refreshId === refreshIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [formatError, selectedProvider]);
 

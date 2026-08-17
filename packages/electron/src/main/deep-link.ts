@@ -106,6 +106,9 @@ class DeepLinkService {
       return;
     }
 
+    if (!this.confirmExternalPluginOpen(request)) {
+      return;
+    }
     void this.openPluginRequest(request);
   }
 
@@ -113,7 +116,30 @@ class DeepLinkService {
     const requests = [...this.pendingPluginRequests];
     this.pendingPluginRequests = [];
     for (const request of requests) {
+      if (!this.confirmExternalPluginOpen(request)) {
+        continue;
+      }
       void this.openPluginRequest(request);
+    }
+  }
+
+  // A ccr://plugin/<id>/open link can be triggered by any web page, so require
+  // explicit user confirmation before starting the gateway and opening a window.
+  private confirmExternalPluginOpen(request: PluginDeepLinkRequest): boolean {
+    try {
+      const choice = dialog.showMessageBoxSync({
+        buttons: ["Cancel", "Open plugin"],
+        cancelId: 0,
+        defaultId: 0,
+        detail: "This starts the CCR gateway and opens a plugin window. Only continue if you initiated this.",
+        message: `A link is asking to open the CCR plugin "${request.pluginId}".`,
+        title: "Open CCR plugin?",
+        type: "question"
+      });
+      return choice === 1;
+    } catch {
+      // Fail closed if the dialog API is unavailable.
+      return false;
     }
   }
 
