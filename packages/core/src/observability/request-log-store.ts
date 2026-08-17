@@ -1307,7 +1307,7 @@ export class RequestLogStore {
   }
 
   private async open(): Promise<SqlDatabase> {
-    mkdirSync(dirname(this.dbFile), { recursive: true });
+    mkdirSync(dirname(this.dbFile), { mode: 0o700, recursive: true });
     const database = createBetterSqliteDatabase(this.dbFile);
     configureSqliteDatabase(database);
 
@@ -4503,7 +4503,7 @@ function storeBodyBuffer(
     };
   }
   if (!existingBodyRef || !existsSync(target)) {
-    writeFileSync(target, buffer);
+    writeFileSync(target, buffer, { mode: 0o600 });
   }
   return {
     bodyRef,
@@ -4649,7 +4649,7 @@ function requestLogBodyPath(bodyDir: string, bodyRef: string, createDirectory = 
   const shard = normalized.slice(0, 2);
   const directory = join(bodyDir, shard);
   if (createDirectory) {
-    mkdirSync(directory, { recursive: true });
+    mkdirSync(directory, { mode: 0o700, recursive: true });
   }
   return join(directory, normalized);
 }

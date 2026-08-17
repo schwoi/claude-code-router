@@ -98,7 +98,22 @@ class WindowsManager {
       window.setTitle(title || APP_NAME);
     });
 
-    void window.loadURL(this.resolveRendererUrl("pages/home/index.html"));
+    const rendererUrl = this.resolveRendererUrl("pages/home/index.html");
+    // Pin the privileged renderer to its own origin. It carries the full `ccr`
+    // preload bridge, so it must never be navigated to (or open) remote content.
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      openExternalHttpUrl(url);
+      return { action: "deny" };
+    });
+    window.webContents.on("will-navigate", (event, url) => {
+      if (isSameOrigin(rendererUrl, url)) {
+        return;
+      }
+      event.preventDefault();
+      openExternalHttpUrl(url);
+    });
+
+    void window.loadURL(rendererUrl);
 
     if (process.env.NODE_ENV === "development") {
       window.webContents.openDevTools({ mode: "detach" });

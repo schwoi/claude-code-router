@@ -241,13 +241,18 @@ async function cachedMarketplaceModulePath(
     throw new Error(`Marketplace module must be a JavaScript file: ${moduleUrl}`);
   }
 
+  // Executable marketplace modules must be pinned by a sha256 integrity hash.
+  // Without one the served bytes are attacker-controlled at fetch time (an entry
+  // that simply omits integrity, a compromise of the module host, or a swap
+  // between installs), so refuse to fetch or run an unpinned module.
   const expectedSha256 = normalizeSha256Integrity(integrity);
-  const cacheKey = expectedSha256 || hashString(moduleUrl);
+  if (!expectedSha256) {
+    throw new Error(`Marketplace module is missing a required sha256 integrity hash: ${moduleUrl}`);
+  }
+  const cacheKey = expectedSha256;
   const file = path.join(marketplaceModuleCacheDir, `${sanitizeFileSegment(id)}-${cacheKey.slice(0, 24)}${extension}`);
-  if (existsSync(file) && (options.offline || expectedSha256)) {
-    if (expectedSha256) {
-      verifySha256(readFileSync(file, "utf8"), expectedSha256, moduleUrl);
-    }
+  if (existsSync(file)) {
+    verifySha256(readFileSync(file, "utf8"), expectedSha256, moduleUrl);
     return file;
   }
   if (options.offline) {
@@ -256,9 +261,7 @@ async function cachedMarketplaceModulePath(
   }
 
   const source = await fetchText(moduleUrl, maxMarketplaceModuleBytes);
-  if (expectedSha256) {
-    verifySha256(source, expectedSha256, moduleUrl);
-  }
+  verifySha256(source, expectedSha256, moduleUrl);
   ensureMarketplaceCacheDir();
   writeFileSync(file, source, "utf8");
   return file;
@@ -613,10 +616,6 @@ function pluginIdValue(value: string | undefined): string {
 
 function sanitizeFileSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "plugin";
-}
-
-function hashString(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function cloneMarketplaceEntry(entry: PluginMarketplaceEntry): PluginMarketplaceEntry {

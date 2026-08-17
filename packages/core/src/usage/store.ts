@@ -303,7 +303,7 @@ export class UsageStore {
   }
 
   private async open(): Promise<SqlDatabase> {
-    mkdirSync(dirname(this.dbFile), { recursive: true });
+    mkdirSync(dirname(this.dbFile), { mode: 0o700, recursive: true });
     const database = createBetterSqliteDatabase(this.dbFile);
     configureSqliteDatabase(database);
 

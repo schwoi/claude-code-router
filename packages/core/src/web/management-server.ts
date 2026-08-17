@@ -602,6 +602,7 @@ function sendBuffer(response: ServerResponse, status: number, body: Buffer, cont
     "cache-control": "no-store",
     "content-length": body.length,
     "content-type": contentType,
+    "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff"
   });
   if (headOnly) {
@@ -621,6 +622,7 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
     "cache-control": "no-store",
     "content-length": body.length,
     "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff"
   });
   response.end(body);
