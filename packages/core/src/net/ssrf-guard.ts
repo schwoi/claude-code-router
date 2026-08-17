@@ -51,8 +51,11 @@ export function isLoopbackIpAddress(value: string): boolean {
 }
 
 async function resolveHostAddresses(hostname: string): Promise<string[]> {
-  if (isIP(hostname)) {
-    return [normalizeIpAddress(hostname)];
+  // URL.hostname brackets IPv6 literals (e.g. "[::1]"); strip them before the
+  // isIP check so literals are classified directly instead of hitting DNS.
+  const literal = normalizeIpAddress(hostname);
+  if (isIP(literal)) {
+    return [literal];
   }
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   const unique = [...new Set(addresses.map((item) => normalizeIpAddress(item.address)).filter(Boolean))];

@@ -50,7 +50,9 @@ if [ -n "${CCR_WEB_BASIC_AUTH_USER:-}" ] && [ -n "${CCR_WEB_BASIC_AUTH_PASSWORD:
   HTPASSWD_FILE="${CONFIG_DIR}/nginx.htpasswd"
   node - "${CCR_WEB_BASIC_AUTH_USER}" "${CCR_WEB_BASIC_AUTH_PASSWORD}" > "${HTPASSWD_FILE}" <<'NODE'
 const crypto = require("node:crypto");
-const [user, password] = process.argv.slice(1);
+// Program is read from stdin (`node - ...`), so Node places "-" at argv[1] and
+// the real arguments start at argv[2].
+const [user, password] = process.argv.slice(2);
 if (/[:\n\r]/.test(user)) {
   process.stderr.write("CCR_WEB_BASIC_AUTH_USER must not contain ':' or newlines.\n");
   process.exit(1);
