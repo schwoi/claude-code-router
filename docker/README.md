@@ -85,6 +85,20 @@ There are two independent authentication layers:
 1. `CCR_WEB_AUTH_TOKEN` protects management RPC. Nginx puts it into the management-page URL, and the browser sends it to RPC as `x-ccr-web-auth`.
 2. CCR client API keys created in the **API Keys** page protect model gateway requests. These are separate from upstream provider credentials.
 
+> [!WARNING]
+> **The management token alone is NOT a network access control.** Nginx serves the token to anyone who can reach `/` (it is returned in the redirect `Location`). The management RPC is a full-privilege admin surface: it can read every provider API key in plaintext and execute arbitrary route scripts. The published port is therefore bound to `127.0.0.1` by default. **Do not expose it beyond loopback without an authentication layer in front of it.**
+
+### Front the management UI with HTTP Basic Auth
+
+To reach the management UI from another host, publish on `0.0.0.0` **and** set Basic Auth credentials. When both variables are present, Nginx requires the credential before serving the UI, the token redirect, or the RPC endpoint (the gateway model API paths keep their own CCR client API-key auth):
+
+```dotenv
+CCR_WEB_BASIC_AUTH_USER=admin
+CCR_WEB_BASIC_AUTH_PASSWORD=replace-with-a-long-random-value
+```
+
+If `CCR_PUBLIC_HOST` is non-loopback and these are unset, the entrypoint logs a warning that the UI is unauthenticated. Alternatively, front the container with your own authenticated reverse proxy (and prefer TLS).
+
 If `CCR_WEB_AUTH_TOKEN` is unset, the entrypoint generates a new random token on each container start. Opening `/` still works because Nginx redirects to a tokenized URL, but a stable token is recommended for persistent or remote deployments.
 
 Avoid putting the token directly in shell history. Create a protected environment file instead:

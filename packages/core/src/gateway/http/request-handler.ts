@@ -21,6 +21,7 @@ import { shouldRecordRequestLogs } from "@ccr/core/observability/raw-trace-sync"
 import { requestLogRequestedModel } from "@ccr/core/observability/request-log-model";
 import { isModelAllowedForProfile, profileForApiKey } from "@ccr/core/profiles/model-allowlist";
 import { applyCors, shouldServeGatewayRequest } from "@ccr/core/gateway/core-runtime/supervisor";
+import { gatewayIdentityNonceParam, gatewayIdentityProofForNonce } from "@ccr/core/gateway/gateway-identity";
 import { billingUsageSyncPath, rawTraceSyncPath } from "@ccr/core/gateway/internal/shared";
 import type { BrowserAutomationMcpIntegration } from "@ccr/core/gateway/internal/shared";
 
@@ -230,6 +231,7 @@ export class GatewayHttpRequestHandler {
         sendJson(response, 200, {
           core: this.status.coreEndpoint,
           coreManagedExternally: this.status.coreManagedExternally || undefined,
+          identityProof: gatewayIdentityProofForNonce(requestUrl.searchParams.get(gatewayIdentityNonceParam)),
           status: this.status.state,
           timestamp: new Date().toISOString()
         });

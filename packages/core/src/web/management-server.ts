@@ -612,6 +612,10 @@ function sendBuffer(response: ServerResponse, status: number, body: Buffer, cont
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
+  if (response.headersSent || response.writableEnded) {
+    response.end();
+    return;
+  }
   const body = Buffer.from(JSON.stringify(payload), "utf8");
   response.writeHead(status, {
     "cache-control": "no-store",

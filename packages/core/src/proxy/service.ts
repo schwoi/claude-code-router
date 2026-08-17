@@ -22,6 +22,7 @@ import type {
   ProxyStatus
 } from "@ccr/core/contracts/app";
 import { PROXY_CA_CERT_FILE } from "@ccr/core/config/constants";
+import { isSensitiveRequestLogHeaderName } from "@ccr/core/observability/sensitive-headers";
 import { windowsSystemCommand } from "@ccr/core/platform/windows-system";
 import { pluginService, type GatewayPluginProxyRouteMatch } from "@ccr/core/plugins/service";
 import {
@@ -1737,7 +1738,15 @@ function cloneHeaders(headers: CapturedHeaders | IncomingHttpHeaders): CapturedH
     if (value === undefined) {
       continue;
     }
-    result[key.toLowerCase()] = Array.isArray(value) ? value.map(String) : String(value);
+    const name = key.toLowerCase();
+    // Redact secrets at capture time so plaintext credentials (Authorization,
+    // Cookie, x-api-key, ...) never sit in the capture ring buffer or reach the
+    // network-capture MCP / debug UI.
+    if (isSensitiveRequestLogHeaderName(name)) {
+      result[name] = "[redacted]";
+      continue;
+    }
+    result[name] = Array.isArray(value) ? value.map(String) : String(value);
   }
   return result;
 }
@@ -1864,6 +1873,10 @@ function proxyErrorBody(message: string): string {
 }
 
 function sendProxyError(response: ServerResponse, statusCode: number, message: string): void {
+  if (response.headersSent || response.writableEnded) {
+    response.destroy(new Error(message));
+    return;
+  }
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(proxyErrorBody(message));
 }

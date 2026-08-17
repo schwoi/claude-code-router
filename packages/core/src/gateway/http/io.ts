@@ -134,6 +134,29 @@ export function formatError(error: unknown): string {
 }
 
 
+/**
+ * Send a JSON error response safely from a top-level request handler catch.
+ *
+ * If the response has already begun (headers sent), writing a fresh status line
+ * throws ERR_HTTP_HEADERS_SENT — and because these handlers run inside a
+ * `void promise.catch(...)`, that throw becomes an unhandled rejection that can
+ * take down the whole process. In that case we can only destroy the socket.
+ */
+export function sendErrorResponse(response: ServerResponse, status: number, error: unknown): void {
+  if (response.headersSent || response.writableEnded) {
+    response.destroy(error instanceof Error ? error : new Error(formatError(error)));
+    return;
+  }
+  try {
+    const body = JSON.stringify({ error: { message: formatError(error) } });
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(body);
+  } catch {
+    response.destroy(error instanceof Error ? error : undefined);
+  }
+}
+
+
 export type UpstreamErrorLogContext = {
   attempts: number;
   elapsedMs: number;

@@ -205,14 +205,25 @@ function originsForDomains(domains) {
 
 async function ensureHostPermissions(domains) {
   const origins = originsForDomains(domains);
-  const granted = await chrome.permissions.contains({ origins });
+  if (await chrome.permissions.contains({ origins })) {
+    return;
+  }
+  // Site access is no longer granted statically (the manifest asks only for
+  // loopback up front). Request the specific domains for this import at runtime,
+  // scoped to exactly what the job needs, from the user's confirmation gesture.
+  let granted = false;
+  try {
+    granted = await chrome.permissions.request({ origins });
+  } catch {
+    granted = false;
+  }
   if (granted) {
     return;
   }
   throw new Error(
     [
-      `CCR Login Import does not have Chrome site access for ${domains.join(", ")}.`,
-      "Reload the unpacked extension after updating it, then grant the extension site access for the requested domains in Chrome extensions settings."
+      `CCR Login Import needs Chrome site access for ${domains.join(", ")} to import their login cookies.`,
+      "Approve the permission prompt, or grant site access for those domains in Chrome extensions settings, then retry."
     ].join(" ")
   );
 }

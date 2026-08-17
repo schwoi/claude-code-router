@@ -39,6 +39,34 @@ APP_CONFIG_DB_FILE="${CONFIG_DIR}/config.sqlite"
 
 mkdir -p "${CONFIG_DIR}" "${CONFIG_DIR}/app-data" /run/nginx /var/lib/nginx /var/log/nginx
 
+# Optional HTTP Basic Auth for the management UI / RPC. The management API is a
+# full-privilege admin surface (it can read every provider API key and run
+# arbitrary route scripts), so exposing this container beyond loopback REQUIRES a
+# credential. When CCR_WEB_BASIC_AUTH_USER / CCR_WEB_BASIC_AUTH_PASSWORD are set,
+# nginx gates the management endpoints; the gateway API paths keep their own
+# API-key auth and are intentionally left untouched here.
+AUTH_BASIC=""
+if [ -n "${CCR_WEB_BASIC_AUTH_USER:-}" ] && [ -n "${CCR_WEB_BASIC_AUTH_PASSWORD:-}" ]; then
+  HTPASSWD_FILE="${CONFIG_DIR}/nginx.htpasswd"
+  node - "${CCR_WEB_BASIC_AUTH_USER}" "${CCR_WEB_BASIC_AUTH_PASSWORD}" > "${HTPASSWD_FILE}" <<'NODE'
+const crypto = require("node:crypto");
+const [user, password] = process.argv.slice(1);
+if (/[:\n\r]/.test(user)) {
+  process.stderr.write("CCR_WEB_BASIC_AUTH_USER must not contain ':' or newlines.\n");
+  process.exit(1);
+}
+const salt = crypto.randomBytes(4);
+const digest = crypto.createHash("sha1").update(password).update(salt).digest();
+const entry = `{SSHA}${Buffer.concat([digest, salt]).toString("base64")}`;
+process.stdout.write(`${user}:${entry}\n`);
+NODE
+  chmod 600 "${HTPASSWD_FILE}"
+  AUTH_BASIC="auth_basic \"Claude Code Router\"; auth_basic_user_file ${HTPASSWD_FILE};"
+elif [ "${CCR_PUBLIC_HOST}" != "127.0.0.1" ] && [ "${CCR_PUBLIC_HOST}" != "localhost" ] && [ "${CCR_PUBLIC_HOST}" != "::1" ]; then
+  echo "[ccr] WARNING: CCR_PUBLIC_HOST=${CCR_PUBLIC_HOST} looks non-loopback but CCR_WEB_BASIC_AUTH_USER/PASSWORD are unset." >&2
+  echo "[ccr] WARNING: the management UI is unauthenticated. Set Basic Auth credentials or front it with an authenticated reverse proxy." >&2
+fi
+
 if [ "${CCR_DOCKER_INIT_CONFIG:-1}" != "0" ] && [ ! -f "${CONFIG_FILE}" ] && [ ! -f "${APP_CONFIG_DB_FILE}" ]; then
   node - <<'NODE'
 const fs = require("node:fs");
@@ -145,11 +173,20 @@ server {
 
   client_max_body_size 8m;
 
+  # Unauthenticated container liveness probe (no token, no secrets).
+  location = /healthz {
+    auth_basic off;
+    add_header Content-Type text/plain;
+    return 200 "ok\n";
+  }
+
   location = / {
+    ${AUTH_BASIC}
     return 302 /pages/home/index.html?ccr_web_token=${CCR_WEB_AUTH_TOKEN_QUERY};
   }
 
   location = /pages/home/index.html {
+    ${AUTH_BASIC}
     if (\$arg_ccr_web_token = "") {
       return 302 /pages/home/index.html?ccr_web_token=${CCR_WEB_AUTH_TOKEN_QUERY};
     }
@@ -157,6 +194,7 @@ server {
   }
 
   location = /api/ccr/rpc {
+    ${AUTH_BASIC}
     proxy_http_version 1.1;
     proxy_set_header Host ${CCR_WEB_HOST}:${CCR_WEB_PORT};
     proxy_set_header Origin http://${CCR_WEB_HOST}:${CCR_WEB_PORT};
@@ -191,6 +229,7 @@ server {
   }
 
   location / {
+    ${AUTH_BASIC}
     try_files \$uri \$uri/ /pages/home/index.html;
   }
 }
