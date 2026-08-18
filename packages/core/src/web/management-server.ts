@@ -602,6 +602,7 @@ function sendBuffer(response: ServerResponse, status: number, body: Buffer, cont
     "cache-control": "no-store",
     "content-length": body.length,
     "content-type": contentType,
+    "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff"
   });
   if (headOnly) {
@@ -612,11 +613,16 @@ function sendBuffer(response: ServerResponse, status: number, body: Buffer, cont
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
+  if (response.headersSent || response.writableEnded) {
+    response.end();
+    return;
+  }
   const body = Buffer.from(JSON.stringify(payload), "utf8");
   response.writeHead(status, {
     "cache-control": "no-store",
     "content-length": body.length,
     "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff"
   });
   response.end(body);

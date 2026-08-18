@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "@ccr/core/contracts/app";
 import { readHeader, readRequestBody, sendJson } from "@ccr/core/gateway/http/io";
+import { constantTimeEqual } from "@ccr/core/net/constant-time";
 import { billingUsageSyncHeader } from "@ccr/core/gateway/internal/shared";
 import { isRecord, numberValue, stringValue } from "@ccr/core/gateway/internal/value";
 import { findProviderByPublicOrInternalName, resolveResponseProviderProtocol } from "@ccr/core/providers/runtime-topology";
@@ -46,7 +47,7 @@ export class GatewayBillingSynchronizer {
       sendJson(response, 405, { error: { message: "Method not allowed." } });
       return;
     }
-    if (readHeader(request.headers[billingUsageSyncHeader]) !== this.token) {
+    if (!constantTimeEqual(readHeader(request.headers[billingUsageSyncHeader]) ?? "", this.token)) {
       sendJson(response, 401, { error: { message: "Unauthorized billing usage sync." } });
       return;
     }

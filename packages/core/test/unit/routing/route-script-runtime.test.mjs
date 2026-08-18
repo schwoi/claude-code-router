@@ -597,13 +597,13 @@ test("dynamic script model deletion overrides an earlier static model rewrite", 
   }
 });
 
-test("route scripts expose the complete documented filesystem API", async () => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "ccr-route-script-"));
-  const inputFile = path.join(directory, "input.json");
-  const outputFile = path.join(directory, "output.txt");
-  const outputJsonFile = path.join(directory, "output.json");
-  const missingFile = path.join(directory, "missing.txt");
-  writeFileSync(inputFile, JSON.stringify({ route: "allowed" }), "utf8");
+test("route scripts expose the documented filesystem API confined to the data dir", async () => {
+  // fs.* is confined to the route-scripts data dir; point it at a temp dir and
+  // use relative paths (absolute paths are rejected, see the next test).
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "ccr-route-script-data-"));
+  const previousDataDir = process.env.CCR_ROUTE_SCRIPT_DATA_DIR;
+  process.env.CCR_ROUTE_SCRIPT_DATA_DIR = dataDir;
+  writeFileSync(path.join(dataDir, "input.json"), JSON.stringify({ route: "allowed" }), "utf8");
   const runtime = new RouteScriptRuntime({ workerCount: 1, workerFile });
   const script = routeScript(`
     const text = await api.fs.readText(input.body.inputFile);
@@ -622,11 +622,11 @@ test("route scripts expose the complete documented filesystem API", async () => 
   `);
   try {
     const result = await runtime.execute("filesystem", script, scriptInput(script, {
-      directory,
-      inputFile,
-      missingFile,
-      outputFile,
-      outputJsonFile
+      directory: ".",
+      inputFile: "input.json",
+      missingFile: "missing.txt",
+      outputFile: "output.txt",
+      outputJsonFile: "output.json"
     }));
     assert.equal(result.status, "ok");
     assert.equal(result.value.inputExists, true);
@@ -641,11 +641,46 @@ test("route scripts expose the complete documented filesystem API", async () => 
       result.value.entries.map((entry) => entry.name).sort(),
       ["input.json", "output.json", "output.txt"]
     );
-    assert.equal(readFileSync(outputFile, "utf8"), "ALLOWED");
-    assert.equal(readFileSync(outputJsonFile, "utf8"), '{\n  "copied": "allowed"\n}\n');
+    assert.equal(readFileSync(path.join(dataDir, "output.txt"), "utf8"), "ALLOWED");
+    assert.equal(readFileSync(path.join(dataDir, "output.json"), "utf8"), '{\n  "copied": "allowed"\n}\n');
   } finally {
     await runtime.close();
-    rmSync(directory, { force: true, recursive: true });
+    if (previousDataDir === undefined) {
+      delete process.env.CCR_ROUTE_SCRIPT_DATA_DIR;
+    } else {
+      process.env.CCR_ROUTE_SCRIPT_DATA_DIR = previousDataDir;
+    }
+    rmSync(dataDir, { force: true, recursive: true });
+  }
+});
+
+test("route scripts cannot read or write files outside the data dir", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "ccr-route-script-confine-"));
+  const previousDataDir = process.env.CCR_ROUTE_SCRIPT_DATA_DIR;
+  process.env.CCR_ROUTE_SCRIPT_DATA_DIR = dataDir;
+  const runtime = new RouteScriptRuntime({ workerCount: 1, workerFile });
+  const script = routeScript(`
+    try {
+      await api.fs.readText(input.body.target);
+      return { escaped: true };
+    } catch (error) {
+      return { escaped: false, message: String(error && error.message || error) };
+    }
+  `);
+  try {
+    for (const target of ["/etc/passwd", "../escape.txt", "~/secret.txt"]) {
+      const result = await runtime.execute("confine", script, scriptInput(script, { target }));
+      assert.equal(result.status, "ok");
+      assert.equal(result.value.escaped, false, `expected ${target} to be rejected`);
+    }
+  } finally {
+    await runtime.close();
+    if (previousDataDir === undefined) {
+      delete process.env.CCR_ROUTE_SCRIPT_DATA_DIR;
+    } else {
+      process.env.CCR_ROUTE_SCRIPT_DATA_DIR = previousDataDir;
+    }
+    rmSync(dataDir, { force: true, recursive: true });
   }
 });
 

@@ -1,8 +1,9 @@
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { parentPort } from "node:worker_threads";
+import { CONFIGDIR } from "@ccr/core/config/constants";
+import { assertPublicFetchTarget } from "@ccr/core/net/ssrf-guard";
 import type {
   RouteScriptWorkerRequest,
   RouteScriptWorkerResponse
@@ -186,9 +187,15 @@ function createRouteScriptBridge(deadline: number): Readonly<Record<string, unkn
   });
 }
 
+// Route scripts must never see the full process environment (provider API keys,
+// CCR_WEB_AUTH_TOKEN, CCR_SERVICE_INSTANCE_TOKEN, etc.). Only variables the user
+// deliberately namespaces for routing (CCR_ROUTE_*) are exposed.
+const routeScriptEnvPrefix = "CCR_ROUTE_";
+
 function routeScriptEnvironment(): Record<string, string> {
   return Object.fromEntries(Object.entries(process.env)
-    .filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    .filter((entry): entry is [string, string] =>
+      typeof entry[1] === "string" && entry[0].toUpperCase().startsWith(routeScriptEnvPrefix)));
 }
 
 async function controlledFetch(
@@ -197,6 +204,11 @@ async function controlledFetch(
   deadline: number
 ): Promise<Record<string, unknown>> {
   assertHttpUrl(rawUrl);
+  // Block SSRF to private/link-local/metadata services (e.g. 169.254.169.254).
+  // Loopback is allowed since a local model endpoint is a legitimate routing
+  // input. Redirects are manual, so the script must re-issue (and re-validate)
+  // any redirect target itself.
+  await assertPublicFetchTarget(rawUrl, { allowLoopback: true });
   const options = isRecord(rawOptions) ? rawOptions : {};
   const method = typeof options.method === "string" ? options.method.toUpperCase() : "GET";
   const body = typeof options.body === "string" ? options.body : undefined;
@@ -279,18 +291,29 @@ async function readTextFile(file: string): Promise<string> {
 async function writeTextFile(file: string, value: string): Promise<void> {
   if (Buffer.byteLength(value, "utf8") > maxFileBytes) throw new Error(`File exceeds ${maxFileBytes} bytes.`);
   const target = resolveScriptPath(file);
+  await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, value, "utf8");
 }
+
+// Route script fs.* access is confined to a dedicated data directory. Absolute
+// paths, "~" expansion, and "../" traversal are rejected so a script cannot read
+// (~/.ssh/id_rsa) or overwrite (~/.bashrc, the config store) arbitrary files.
+const routeScriptDataDir = process.env.CCR_ROUTE_SCRIPT_DATA_DIR?.trim()
+  || path.join(CONFIGDIR, "route-scripts");
 
 function resolveScriptPath(file: string): string {
   if (typeof file !== "string" || !file.trim() || file.includes("\0")) {
     throw new Error("A valid filesystem path is required.");
   }
-  if (file === "~") return path.resolve(os.homedir());
-  if (file.startsWith("~/") || file.startsWith("~\\")) {
-    return path.resolve(os.homedir(), file.slice(2));
+  if (path.isAbsolute(file) || file === "~" || file.startsWith("~/") || file.startsWith("~\\")) {
+    throw new Error("Route script paths must be relative to the route-scripts data directory.");
   }
-  return path.resolve(file);
+  const base = path.resolve(routeScriptDataDir);
+  const target = path.resolve(base, file);
+  if (target !== base && !target.startsWith(base + path.sep)) {
+    throw new Error("Route script paths must stay within the route-scripts data directory.");
+  }
+  return target;
 }
 
 function assertHttpUrl(rawUrl: string): void {

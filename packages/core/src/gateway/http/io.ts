@@ -134,6 +134,49 @@ export function formatError(error: unknown): string {
 }
 
 
+/**
+ * Send a JSON error response safely from a top-level request handler catch.
+ *
+ * If the response has already begun (headers sent), writing a fresh status line
+ * throws ERR_HTTP_HEADERS_SENT — and because these handlers run inside a
+ * `void promise.catch(...)`, that throw becomes an unhandled rejection that can
+ * take down the whole process. In that case we can only destroy the socket.
+ */
+export function sendErrorResponse(response: ServerResponse, status: number, error: unknown): void {
+  if (response.headersSent || response.writableEnded) {
+    response.destroy(error instanceof Error ? error : new Error(formatError(error)));
+    return;
+  }
+  // Honor a status code carried on the error (e.g. 400 for malformed JSON, 413
+  // for an over-size body) instead of always reporting the caller's default.
+  const resolvedStatus = error instanceof HttpRequestError ? error.statusCode : status;
+  try {
+    const body = JSON.stringify({ error: { message: formatError(error) } });
+    response.writeHead(resolvedStatus, { "content-type": "application/json" });
+    response.end(body);
+  } catch {
+    response.destroy(error instanceof Error ? error : undefined);
+  }
+}
+
+
+/** Error carrying the HTTP status the top-level handler should report. */
+export class HttpRequestError extends Error {
+  readonly statusCode: number;
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.name = "HttpRequestError";
+    this.statusCode = statusCode;
+  }
+}
+
+/** Largest request body the gateway will buffer before replying 413. */
+export const maxRequestBodyBytes = (() => {
+  const raw = Number(process.env.CCR_MAX_REQUEST_BODY_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 100 * 1024 * 1024;
+})();
+
+
 export type UpstreamErrorLogContext = {
   attempts: number;
   elapsedMs: number;
@@ -291,11 +334,17 @@ export function parseJsonObject(buffer: Buffer): Record<string, unknown> {
   if (buffer.length === 0) {
     return {};
   }
-  const parsed = JSON.parse(buffer.toString("utf8")) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(buffer.toString("utf8")) as unknown;
+  } catch {
+    // Malformed client JSON is a client error, not a gateway (502) failure.
+    throw new HttpRequestError(400, "Request body is not valid JSON.");
+  }
   if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
     return parsed as Record<string, unknown>;
   }
-  throw new Error("Request body must be a JSON object.");
+  throw new HttpRequestError(400, "Request body must be a JSON object.");
 }
 
 
@@ -307,10 +356,21 @@ export function readHeader(value: string | string[] | undefined): string | undef
 }
 
 
-export function readRequestBody(request: IncomingMessage): Promise<Buffer> {
+export function readRequestBody(request: IncomingMessage, maxBytes = maxRequestBodyBytes): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    request.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    let total = 0;
+    request.on("data", (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.length;
+      if (total > maxBytes) {
+        // Stop buffering an unbounded body before it exhausts memory.
+        request.destroy();
+        reject(new HttpRequestError(413, `Request body exceeds ${maxBytes} bytes.`));
+        return;
+      }
+      chunks.push(buffer);
+    });
     request.on("end", () => resolve(Buffer.concat(chunks)));
     request.on("error", reject);
   });

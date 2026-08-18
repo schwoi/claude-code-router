@@ -875,6 +875,15 @@ export class GatewayRequestPipeline {
             0
           )
         }));
+        // pipe() does not propagate source errors downstream, so without this
+        // the client would hang on a half-finished stream until its own idle
+        // timeout, and the intermediate transforms would leak. Tear the whole
+        // chain down and destroy the client response so the socket closes.
+        clientResponseBody.unpipe(response);
+        destroyResponseStreams(responseStreams);
+        if (!response.writableEnded && !response.destroyed) {
+          response.destroy(error);
+        }
       };
       for (const stream of responseStreams) {
         stream.on("error", onResponseStreamError);

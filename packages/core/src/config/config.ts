@@ -348,9 +348,14 @@ export async function loadAppConfig(): Promise<AppConfig> {
         console.warn(`[config] Failed to archive legacy JSON config: ${formatError(archiveError)}`);
       });
     }
+    lastConfigLoadError = undefined;
     return config;
   } catch (error) {
-    console.warn(`[config] Failed to load config: ${formatError(error)}`);
+    // A corrupt/unreadable config store silently degrading to an empty default
+    // produces confusing "model not allowed"/503 symptoms downstream. Make the
+    // root cause loud and record it so callers (e.g. /health) can surface it.
+    lastConfigLoadError = formatError(error);
+    console.error(`[config] Failed to load config; falling back to an empty default configuration with no providers: ${lastConfigLoadError}`);
     const persistedApiKeys = await loadPersistedApiKeys().catch((storeError) => {
       console.warn(`[config] Failed to load API keys: ${formatError(storeError)}`);
       return [] as ApiKeyConfig[];
@@ -367,6 +372,13 @@ export async function loadAppConfig(): Promise<AppConfig> {
       APIKEYS: apiKeys
     };
   }
+}
+
+let lastConfigLoadError: string | undefined;
+
+/** Returns the message from the most recent failed config load, if any. */
+export function getLastConfigLoadError(): string | undefined {
+  return lastConfigLoadError;
 }
 
 let appConfigWriteQueue: Promise<void> = Promise.resolve();

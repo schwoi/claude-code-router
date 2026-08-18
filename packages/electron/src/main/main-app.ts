@@ -15,6 +15,7 @@ import { appUpdateService } from "./update-service";
 import { browserAutomationMcpService } from "./browser-automation-mcp";
 import { browserWebSearchMcpService } from "./electron-web-search-mcp";
 import { applyNativeThemePreference } from "./native-theme";
+import { installDenyByDefaultSessionPermissions } from "./session-permissions";
 import windowsManager from "./windows";
 import { closeRequestLogRuntime } from "@ccr/core/observability/request-log-store";
 import { stopProviderModelAutoRefreshService, syncProviderModelAutoRefreshService } from "@ccr/core/providers/model-auto-refresh";
@@ -47,6 +48,7 @@ function startPrimaryInstance(): void {
   });
 
   void app.whenReady().then(async () => {
+    installDenyByDefaultSessionPermissions();
     const config = await loadAppConfig();
     applyNativeThemePreference(config.theme);
     windowsManager.setOnboardingFinished(await loadOnboardingFinished());

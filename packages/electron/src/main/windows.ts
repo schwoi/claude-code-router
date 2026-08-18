@@ -98,7 +98,22 @@ class WindowsManager {
       window.setTitle(title || APP_NAME);
     });
 
-    void window.loadURL(this.resolveRendererUrl("pages/home/index.html"));
+    const rendererUrl = this.resolveRendererUrl("pages/home/index.html");
+    // Pin the privileged renderer to its own origin. It carries the full `ccr`
+    // preload bridge, so it must never be navigated to (or open) remote content.
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      openExternalHttpUrl(url);
+      return { action: "deny" };
+    });
+    window.webContents.on("will-navigate", (event, url) => {
+      if (isSameOrigin(rendererUrl, url)) {
+        return;
+      }
+      event.preventDefault();
+      openExternalHttpUrl(url);
+    });
+
+    void window.loadURL(rendererUrl);
 
     if (process.env.NODE_ENV === "development") {
       window.webContents.openDevTools({ mode: "detach" });
@@ -206,7 +221,7 @@ class WindowsManager {
           }
         };
       }
-      void shell.openExternal(url);
+      openExternalHttpUrl(url);
       return { action: "deny" };
     });
     window.webContents.on("did-create-window", (childWindow, details) => {
@@ -224,7 +239,7 @@ class WindowsManager {
         return;
       }
       event.preventDefault();
-      void shell.openExternal(url);
+      openExternalHttpUrl(url);
     });
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (isMainFrame === false || window.isDestroyed() || loadingFailurePage) {
@@ -374,7 +389,7 @@ function configurePluginChildWindow(
     if (handlePluginChildWindowControl(window, url)) {
       return { action: "deny" };
     }
-    void shell.openExternal(url);
+    openExternalHttpUrl(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
@@ -382,7 +397,7 @@ function configurePluginChildWindow(
       return;
     }
     event.preventDefault();
-    void shell.openExternal(url);
+    openExternalHttpUrl(url);
   });
 }
 
@@ -467,6 +482,22 @@ function isSameOrigin(baseUrl: string, targetUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Only hand http/https URLs to the OS. Plugin windows load remote third-party
+// origins, so an XSS/redirect there must not be able to reach the shell with
+// file://, smb:// (NTLM relay), or protocol-handler schemes (ms-msdt:, ...).
+function openExternalHttpUrl(rawUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return;
+  }
+  void shell.openExternal(parsed.toString());
 }
 
 function clampNumber(value: number, min: number, max: number): number {

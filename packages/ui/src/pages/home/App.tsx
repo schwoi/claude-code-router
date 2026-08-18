@@ -616,6 +616,16 @@ function App() {
   }, [activeView, agentAnalysisEnabled, agentAnalysisFilterKey]);
 
   const requestLogFilterKey = JSON.stringify(requestLogFilter);
+  // Debounce the fetch so typing in the search box (or rapidly changing filters)
+  // does not fire a getRequestLogs IPC/SQL query and spinner flash per keystroke.
+  const [debouncedRequestLogFilterKey, setDebouncedRequestLogFilterKey] = useState(requestLogFilterKey);
+  useEffect(() => {
+    if (debouncedRequestLogFilterKey === requestLogFilterKey) {
+      return;
+    }
+    const timer = window.setTimeout(() => setDebouncedRequestLogFilterKey(requestLogFilterKey), 300);
+    return () => window.clearTimeout(timer);
+  }, [requestLogFilterKey, debouncedRequestLogFilterKey]);
 
   useEffect(() => {
     if (activeView !== "logs") {
@@ -662,7 +672,7 @@ function App() {
       cancelled = true;
       stopPolling();
     };
-  }, [activeView, requestLogsEnabled, requestLogFilterKey]);
+  }, [activeView, requestLogsEnabled, debouncedRequestLogFilterKey]);
 
   useEffect(() => {
     if (activeView !== "networking" || !draftConfig.proxy.captureNetwork) {
@@ -866,6 +876,7 @@ function App() {
 
     const requestId = autoSaveRequestId.current + 1;
     autoSaveRequestId.current = requestId;
+    const draftSnapshot = draftConfig;
     const configToSave = normalizeConfig({
       ...draftConfig,
       theme: themePreference
@@ -875,7 +886,13 @@ function App() {
       void window.ccr?.saveConfig(configToSave, options)
         .then((saved) => {
           if (autoSaveRequestId.current === requestId) {
-            syncConfigState(saved);
+            // Never overwrite a draft the user edited while the save was in
+            // flight: only adopt the server's config when the draft is still the
+            // exact object we saved.
+            const normalized = normalizeConfig(saved);
+            setSavedConfig(normalized);
+            setThemePreference(normalized.theme || "system");
+            setDraftConfig((current) => (current === draftSnapshot ? normalized : current));
             setActionError("");
           }
         })

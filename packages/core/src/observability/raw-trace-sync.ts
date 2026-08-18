@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, join, resolve as pathResolve, sep as pathSep } from "node:path";
 import type { AppConfig } from "@ccr/core/contracts/app";
 import { RAW_TRACE_SPOOL_DIR } from "@ccr/core/config/constants";
+import { constantTimeEqual } from "@ccr/core/net/constant-time";
 import {
   enqueueGatewayRequestLogFromRawTrace,
   type RequestLogRawTraceFiles,
@@ -183,7 +184,7 @@ export class RawTraceSynchronizer {
       sendJson(response, 405, { error: { message: "Method not allowed." } });
       return;
     }
-    if (readHeader(request.headers[rawTraceSyncHeader]) !== this.token) {
+    if (!constantTimeEqual(readHeader(request.headers[rawTraceSyncHeader]) ?? "", this.token)) {
       sendJson(response, 401, { error: { message: "Unauthorized raw trace sync." } });
       return;
     }

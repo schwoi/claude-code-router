@@ -1,5 +1,6 @@
 import type { ApiKeyConfig, AppConfig } from "@ccr/core/contracts/app";
 import { endpoint as gatewayEndpoint } from "@ccr/core/gateway/core-runtime/supervisor";
+import { createGatewayIdentityNonce, gatewayIdentityNonceParam, verifyGatewayIdentityProof } from "@ccr/core/gateway/gateway-identity";
 import { gatewayRuntimeConfigControlPath, gatewayRuntimeConfigRevision } from "@ccr/core/gateway/runtime-config-control";
 
 export type ExistingCcrGatewayProbe =
@@ -22,7 +23,11 @@ export async function probeExistingCcrGateway(
   config: Pick<AppConfig, "APIKEY" | "APIKEYS" | "gateway">
 ): Promise<ExistingCcrGatewayProbe> {
   const endpoint = publicGatewayEndpoint(config);
-  const health = await fetchExistingGateway(endpoint, "/health");
+  // Challenge the listener to prove it is a CCR gateway run by the same OS user.
+  // A JSON-shape match is trivially forged by a process squatting the loopback
+  // port; sending API keys before an identity proof would leak them to it.
+  const nonce = createGatewayIdentityNonce();
+  const health = await fetchExistingGateway(endpoint, `/health?${gatewayIdentityNonceParam}=${nonce}`);
   let ccrGateway = isCcrGatewayHealth(health.payload);
   let root: ExistingGatewayHttpProbe | undefined;
 
@@ -35,6 +40,16 @@ export async function probeExistingCcrGateway(
       return { endpoint, reason: health.reason || root?.reason, state: "unavailable" };
     }
     return { endpoint, status: health.status ?? root?.status, state: "not-ccr" };
+  }
+
+  const identityProof = isRecord(health.payload) ? health.payload.identityProof : undefined;
+  if (!verifyGatewayIdentityProof(nonce, identityProof)) {
+    return {
+      endpoint,
+      message: "A process is using the gateway port but did not prove it is the CCR gateway for this user. Refusing to send API keys to it. Stop that process and retry.",
+      status: 409,
+      state: "unauthorized"
+    };
   }
 
   const candidates = existingGatewayApiKeyCandidates(config);

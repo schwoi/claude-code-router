@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { installProcessErrorGuards } from "@ccr/core/platform/process-guards";
 import { installSocketTypeOfServiceCompat } from "@ccr/core/platform/socket-compat";
 import { startWebManagementServer } from "@ccr/core/web/management-server";
 
+installProcessErrorGuards();
 installSocketTypeOfServiceCompat();
 
 type CoreServerOptions = {

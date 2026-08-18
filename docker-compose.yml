@@ -5,8 +5,14 @@ services:
       dockerfile: Dockerfile
     image: claude-code-router:local
     ports:
-      # Publish only Nginx. Internal web/gateway listeners stay inside the container.
-      - "3458:8080"
+      # Publish only Nginx, bound to loopback by default. The management UI is a
+      # full-privilege admin surface — to reach it from another host, change the
+      # bind to 0.0.0.0 AND set CCR_WEB_BASIC_AUTH_USER / CCR_WEB_BASIC_AUTH_PASSWORD
+      # (or front it with an authenticated reverse proxy). See docker/README.md.
+      - "127.0.0.1:3458:8080"
+    # environment:
+    #   CCR_WEB_BASIC_AUTH_USER: admin
+    #   CCR_WEB_BASIC_AUTH_PASSWORD: change-me
     volumes:
       - ccr-data:/data
     restart: unless-stopped

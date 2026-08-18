@@ -14,7 +14,7 @@ import { proxyService } from "@ccr/core/proxy/service";
 import { ClaudeCodeRouterPlugin } from "@ccr/core/gateway/claude-code-router-plugin";
 import { compileCoreGatewayConfig } from "@ccr/core/gateway/core-runtime/config-compiler";
 import { isAddressInUseMessage, probeExistingCcrGateway, reloadExistingCcrGatewayConfig } from "@ccr/core/gateway/existing-gateway-probe";
-import { closeServer, formatError } from "@ccr/core/gateway/http/io";
+import { closeServer, formatError, sendErrorResponse } from "@ccr/core/gateway/http/io";
 import { RawTraceSynchronizer } from "@ccr/core/observability/raw-trace-sync";
 import { GatewayBillingSynchronizer } from "@ccr/core/usage/billing-sync";
 import { assertLoopbackCoreHost, endpoint, formatCoreGatewayChildExit, gatewayNetworkEndpoints, generateCoreGatewayAuthToken, isCoreGatewayHealthy, loopbackCoreHostError, removeManagedCoreGatewayMarker, shouldRunGatewayRuntime, shouldRunUnifiedServer, spawnGatewayProcess, stopPreviousManagedCoreGateway, waitForManagedCoreGatewayReady, writeManagedCoreGatewayMarker } from "@ccr/core/gateway/core-runtime/supervisor";
@@ -435,15 +435,13 @@ class GatewayService {
     this.server = createServer((request, response) => {
       if (proxyService.shouldHandleHttpRequest(request)) {
         void proxyService.handleHttpRequest(request, response).catch((error) => {
-          response.writeHead(502, { "content-type": "application/json" });
-          response.end(JSON.stringify({ error: { message: formatError(error) } }));
+          sendErrorResponse(response, 502, error);
         });
         return;
       }
 
       void this.handleRequest(request, response).catch((error) => {
-        response.writeHead(502, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { message: formatError(error) } }));
+        sendErrorResponse(response, 502, error);
       });
     });
 
