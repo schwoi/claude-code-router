@@ -47,7 +47,10 @@ mkdir -p "${CONFIG_DIR}" "${CONFIG_DIR}/app-data" /run/nginx /var/lib/nginx /var
 # API-key auth and are intentionally left untouched here.
 AUTH_BASIC=""
 if [ -n "${CCR_WEB_BASIC_AUTH_USER:-}" ] && [ -n "${CCR_WEB_BASIC_AUTH_PASSWORD:-}" ]; then
-  HTPASSWD_FILE="${CONFIG_DIR}/nginx.htpasswd"
+  # Regenerated on every start, so keep it out of the /data volume. Must be
+  # readable by the nginx worker user (www-data), not just the root master
+  # process, or auth_basic fails open-file and every gated route returns 500.
+  HTPASSWD_FILE="/run/nginx/ccr.htpasswd"
   node - "${CCR_WEB_BASIC_AUTH_USER}" "${CCR_WEB_BASIC_AUTH_PASSWORD}" > "${HTPASSWD_FILE}" <<'NODE'
 const crypto = require("node:crypto");
 // Program is read from stdin (`node - ...`), so Node places "-" at argv[1] and
@@ -62,7 +65,8 @@ const digest = crypto.createHash("sha1").update(password).update(salt).digest();
 const entry = `{SSHA}${Buffer.concat([digest, salt]).toString("base64")}`;
 process.stdout.write(`${user}:${entry}\n`);
 NODE
-  chmod 600 "${HTPASSWD_FILE}"
+  chown root:www-data "${HTPASSWD_FILE}"
+  chmod 640 "${HTPASSWD_FILE}"
   AUTH_BASIC="auth_basic \"Claude Code Router\"; auth_basic_user_file ${HTPASSWD_FILE};"
 elif [ "${CCR_PUBLIC_HOST}" != "127.0.0.1" ] && [ "${CCR_PUBLIC_HOST}" != "localhost" ] && [ "${CCR_PUBLIC_HOST}" != "::1" ]; then
   echo "[ccr] WARNING: CCR_PUBLIC_HOST=${CCR_PUBLIC_HOST} looks non-loopback but CCR_WEB_BASIC_AUTH_USER/PASSWORD are unset." >&2
@@ -166,6 +170,13 @@ NODE
 fi
 
 cat > /etc/nginx/conf.d/default.conf <<EOF
+# Requests without a token resolve to a path that never exists, so try_files in
+# the index location falls through to the auth-gated redirect that appends one.
+map \$arg_ccr_web_token \$ccr_home_index {
+  "" /__ccr_token_redirect;
+  default /pages/home/index.html;
+}
+
 server {
   listen ${CCR_NGINX_PORT};
   server_name _;
@@ -182,17 +193,22 @@ server {
     return 200 "ok\n";
   }
 
+  # The tokenized redirect must never be reachable without credentials: a plain
+  # "return 302" runs in the rewrite phase, BEFORE auth_basic (access phase),
+  # which would hand the management token to unauthenticated clients. Routing
+  # through try_files (precontent phase, after access) keeps it behind auth.
   location = / {
     ${AUTH_BASIC}
-    return 302 /pages/home/index.html?ccr_web_token=${CCR_WEB_AUTH_TOKEN_QUERY};
+    try_files /__ccr_token_redirect @ccr_home_redirect;
   }
 
   location = /pages/home/index.html {
     ${AUTH_BASIC}
-    if (\$arg_ccr_web_token = "") {
-      return 302 /pages/home/index.html?ccr_web_token=${CCR_WEB_AUTH_TOKEN_QUERY};
-    }
-    try_files /pages/home/index.html =404;
+    try_files \$ccr_home_index @ccr_home_redirect;
+  }
+
+  location @ccr_home_redirect {
+    return 302 /pages/home/index.html?ccr_web_token=${CCR_WEB_AUTH_TOKEN_QUERY};
   }
 
   location = /api/ccr/rpc {
@@ -217,6 +233,15 @@ server {
   }
 
   location ~ ^/(v1|v1beta|mcp|messages|chat/completions|responses|interactions)(/|$) {
+    # The upstream pins Access-Control-Allow-Origin to its own loopback
+    # endpoint, which browsers reject for any real cross-origin caller
+    # (extensions, web UIs). These routes use bearer-key auth with no cookies,
+    # so a wildcard origin is safe; reflect the requested headers so SDK
+    # extras (e.g. x-stainless-*) survive preflight.
+    proxy_hide_header Access-Control-Allow-Origin;
+    proxy_hide_header Access-Control-Allow-Headers;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Headers \$http_access_control_request_headers always;
     proxy_http_version 1.1;
     proxy_buffering off;
     proxy_request_buffering off;
