@@ -233,6 +233,15 @@ server {
   }
 
   location ~ ^/(v1|v1beta|mcp|messages|chat/completions|responses|interactions)(/|$) {
+    # The upstream pins Access-Control-Allow-Origin to its own loopback
+    # endpoint, which browsers reject for any real cross-origin caller
+    # (extensions, web UIs). These routes use bearer-key auth with no cookies,
+    # so a wildcard origin is safe; reflect the requested headers so SDK
+    # extras (e.g. x-stainless-*) survive preflight.
+    proxy_hide_header Access-Control-Allow-Origin;
+    proxy_hide_header Access-Control-Allow-Headers;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Headers \$http_access_control_request_headers always;
     proxy_http_version 1.1;
     proxy_buffering off;
     proxy_request_buffering off;
